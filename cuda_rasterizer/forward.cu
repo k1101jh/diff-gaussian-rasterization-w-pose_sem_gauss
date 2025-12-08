@@ -260,7 +260,7 @@ __global__ void preprocessCUDA(int P, int D, int M,
 // Main rasterization method. Collaboratively works on one tile per
 // block, each thread treats one pixel. Alternates between fetching 
 // and rasterizing data.
-template <uint32_t CHANNELS>
+template <uint32_t CHANNELS, uint32_t SEMANTICS>
 __global__ void __launch_bounds__(BLOCK_X * BLOCK_Y)
 renderCUDA(
 	const uint2* __restrict__ ranges,
@@ -276,6 +276,9 @@ renderCUDA(
 	const float* __restrict__ depth,
 	float* __restrict__ out_depth, 
 	float* __restrict__ out_opacity,
+	// semantic
+	const float* __restrict__ sem_features,
+	float* __restrict__ out_semantics,
 	int * __restrict__ n_touched)
 {
 	// Identify current tile and associated min/max pixel range.
@@ -309,7 +312,9 @@ renderCUDA(
 	uint32_t contributor = 0;
 	uint32_t last_contributor = 0;
 	float C[CHANNELS] = { 0 };
-	float D = 0.0f;
+	// semantic
+	float L[SEMANTICS] = { 0 };
+	float D = 0.0f; // SegGauss-SLAM에서는 15.0f로 지정함
 
 	// Iterate over batches until all done or range is complete
 	for (int i = 0; i < rounds; i++, toDo -= BLOCK_SIZE)
@@ -364,6 +369,10 @@ renderCUDA(
 			for (int ch = 0; ch < CHANNELS; ch++) {
 				C[ch] += features[collected_id[j] * CHANNELS + ch] * alpha * T;
 			}
+			// semantic
+			for (int ch = 0; ch < SEMANTICS; ch++){
+				L[ch] += sem_features[collected_id[j] * SEMANTICS + ch] * alpha * T;}
+
 			D += collected_depth[j] * alpha * T;
 			// Keep track of how many pixels touched this Gaussian.
 			if (test_T > 0.5f) {
@@ -388,6 +397,10 @@ renderCUDA(
 		}
 		out_depth[pix_id] = D;
 		out_opacity[pix_id] = 1 - T;
+
+		// semantic
+        for (int ch = 0; ch < SEMANTICS; ch++)
+			out_semantics[ch * H * W + pix_id] = L[ch];
 	}
 }
 
@@ -406,9 +419,12 @@ void FORWARD::render(
 	const float* depth,
 	float* out_depth, 
 	float* out_opacity,
+	//semantic
+	const float* semantics,
+	float* out_semantics,
 	int* n_touched)
 {
-	renderCUDA<NUM_CHANNELS> << <grid, block >> > (
+	renderCUDA<NUM_CHANNELS, NUM_LABELS> << <grid, block >> > (
 		ranges,
 		point_list,
 		W, H,
@@ -422,7 +438,11 @@ void FORWARD::render(
 		depth,
 		out_depth,
 		out_opacity,
-		n_touched);
+		// semantic
+		semantics,
+		out_semantics
+		n_touched,
+	);
 }
 
 void FORWARD::preprocess(int P, int D, int M,

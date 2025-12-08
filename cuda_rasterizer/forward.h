@@ -63,7 +63,10 @@ namespace FORWARD
 		const float* depth,
 	    float* out_depth,
 		float* out_opacity,
-		int* n_touched);
+		const float* sem_features,
+		float* out_semantics,
+		int* n_touched
+	);
 }
 
 

@@ -51,6 +51,9 @@ namespace CudaRasterizer
 			float* out_color,
 			float* out_depth,
 			float* out_opacity,
+			// semantic
+			const float* sh_sems,
+			float* out_semantics,
 			int* radii = nullptr,
 			int* n_touched = nullptr,
 			bool debug = false);
@@ -88,6 +91,10 @@ namespace CudaRasterizer
 			float* dL_dscale,
 			float* dL_drot,
 			float* dL_dtau,
+			// semantic
+			const float* sh_sems,
+			const float* dL_dpix_sem,
+			float* dL_dsemantics,
 			bool debug);
 	};
 };

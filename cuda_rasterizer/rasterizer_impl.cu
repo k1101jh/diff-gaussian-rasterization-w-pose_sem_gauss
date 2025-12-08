@@ -218,6 +218,9 @@ int CudaRasterizer::Rasterizer::forward(
 	float* out_color,
 	float* out_depth,
 	float* out_opacity,
+	// semantic
+	const float* sh_sems,
+	float* out_semantics,
 	int* radii,
 	int* n_touched,
 	bool debug)
@@ -337,6 +340,9 @@ int CudaRasterizer::Rasterizer::forward(
 		geomState.depths,
 		out_depth, 
 		out_opacity,
+		// semantic
+		sh_sems,
+		out_semantics,
 		n_touched
     ), debug)
 
@@ -378,6 +384,10 @@ void CudaRasterizer::Rasterizer::backward(
 	float* dL_dscale,
 	float* dL_drot,
 	float* dL_dtau,
+	// semantic
+	const float* sh_sems,
+	const float* dL_dpix_sem,
+	float* dL_dsemantics,
 	bool debug)
 {
 	GeometryState geomState = GeometryState::fromChunk(geom_buffer, P);
@@ -400,6 +410,8 @@ void CudaRasterizer::Rasterizer::backward(
 	// If we were given precomputed colors and not SHs, use them.
 	const float* color_ptr = (colors_precomp != nullptr) ? colors_precomp : geomState.rgb;
     const float* depth_ptr = geomState.depths;
+	// semantic
+	const float* sem_ptr = sh_sems;
 
 	CHECK_CUDA(BACKWARD::render(
 		tile_grid,
@@ -420,7 +432,11 @@ void CudaRasterizer::Rasterizer::backward(
 		(float4*)dL_dconic,
 		dL_dopacity,
 		dL_dcolor,
-		dL_ddepth
+		dL_ddepth,
+		// semantic
+		sem_ptr,
+		dL_dpix_sem,
+		dL_dsemantics,
     ), debug)
 
 	// Take care of the rest of preprocessing. Was the precomputed covariance

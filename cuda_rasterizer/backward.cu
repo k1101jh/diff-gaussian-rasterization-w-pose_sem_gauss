@@ -579,7 +579,11 @@ renderCUDA(
 	float4* __restrict__ dL_dconic2D,
 	float* __restrict__ dL_dopacity,
 	float* __restrict__ dL_dcolors,
-	float* __restrict__ dL_ddepths)
+	float* __restrict__ dL_ddepths,
+	// semantic
+	const float* __restrict__ semantics,
+	const float* __restrict__ dL_dpixels_sems,
+	float* __restrict__ dL_dsemantics)
 {
 	// We rasterize again. Compute necessary block info.
 	auto block = cg::this_thread_block();
@@ -606,8 +610,12 @@ renderCUDA(
 	__shared__ float collected_colors[C * BLOCK_SIZE];
 	__shared__ float collected_depths[BLOCK_SIZE];
 
+	// semantic
+	__shared__ float collected_semantics[L * BLOCK_SIZE];
+
 	__shared__ float2 dL_dmean2D_shared[BLOCK_SIZE];
 	__shared__ float3 dL_dcolors_shared[BLOCK_SIZE];
+	__shared__ float dL_dsemantics_shared[L][BLOCK_SIZE];
 	__shared__ float dL_ddepths_shared[BLOCK_SIZE];
 	__shared__ float dL_dopacity_shared[BLOCK_SIZE];
 	__shared__ float4 dL_dconic2D_shared[BLOCK_SIZE];
@@ -626,17 +634,25 @@ renderCUDA(
 	float dL_dpixel[C] = { 0 };
 	float accum_rec_depth = 0;
 	float dL_dpixel_depth = 0;
+	// semantic
+	float accum_rec_sem[L] = { 0 };
+	float dL_dpixel_sem[L];
 	if (inside) {
 		#pragma unroll
 		for (int i = 0; i < C; i++) {
 			dL_dpixel[i] = dL_dpixels[i * H * W + pix_id];
 		}
 		dL_dpixel_depth = dL_dpixels_depth[pix_id];
+		// semantic
+		for (int i = 0; i < L; i++)
+			dL_dpixel_sem[i] = dL_dpixels_sems[i * H * W + pix_id];
 	}
 
 	float last_alpha = 0.f;
 	float last_color[C] = { 0.f };
 	float last_depth = 0.f;
+	// semantic
+    float last_semantic[L] = { 0 };
 
 	// Gradient of pixel coordinate w.r.t. normalized 
 	// screen-space viewport corrdinates (-1 to 1)
@@ -663,6 +679,9 @@ renderCUDA(
 				
 			}
 			collected_depths[tid] = depths[coll_id];
+			// semantic
+		    for (int i = 0; i < L; i++)
+				collected_semantics[i * BLOCK_SIZE + tid] = semantics[coll_id * L + i];
 		}
 		for (int j = 0; j < min(BLOCK_SIZE, toDo); j++) {
 			block.sync();
@@ -706,6 +725,7 @@ renderCUDA(
 			float dL_dalpha = 0.0f;
 			const int global_id = collected_id[j];
 			float local_dL_dcolors[3];
+			float local_dL_dsemantics[L];
 			#pragma unroll
 			for (int ch = 0; ch < C; ch++)
 			{
@@ -721,6 +741,17 @@ renderCUDA(
 			dL_dcolors_shared[tid].x = local_dL_dcolors[0];
 			dL_dcolors_shared[tid].y = local_dL_dcolors[1];
 			dL_dcolors_shared[tid].z = local_dL_dcolors[2];
+			// semantic
+			for (int ch = 0; ch < L; ch++)
+			{
+				const float l = collected_semantics[ch * BLOCK_SIZE + j];
+				accum_rec_sem[ch] = skip ? accum_rec_sem[ch] : last_alpha * last_semantic[ch] + (1.f - last_alpha) * accum_rec_sem[ch];
+				last_semantic[ch] = skip ? last_semantic[ch] : l;
+
+				const float dL_dchannel_sem = dL_dpixel_sem[ch];
+				dL_dalpha += (l - accum_rec_sem[ch]) * dL_dchannel_sem;
+				dL_dsemantics_shared[ch][tid] = skip? 0.0f: dchannel_dcolor * dL_dchannel_sem;
+			}
 
 			const float depth = collected_depths[j];
 			accum_rec_depth = skip ? accum_rec_depth : last_alpha * last_depth + (1.f - last_alpha) * accum_rec_depth;
@@ -761,8 +792,13 @@ renderCUDA(
 				dL_dconic2D_shared,
 				dL_dopacity_shared,
 				dL_dcolors_shared, 
-				dL_ddepths_shared
-			);	
+				dL_ddepths_shared,
+			);
+			for (int ch = 0; ch < L; ++ch) {
+				render_cuda_reduce_sum(block,
+				dL_dsemantics_shared[ch]
+				);
+			}
 			
 			if (tid == 0) {
 				float2 dL_dmean2D_acc = dL_dmean2D_shared[0];
@@ -770,6 +806,7 @@ renderCUDA(
 				float dL_dopacity_acc = dL_dopacity_shared[0];
 				float3 dL_dcolors_acc = dL_dcolors_shared[0];
 				float dL_ddepths_acc = dL_ddepths_shared[0];
+				float dL_dsemantics_acc = dL_dsemantics_shared[0];
 
 				atomicAdd(&dL_dmean2D[global_id].x, dL_dmean2D_acc.x);
 				atomicAdd(&dL_dmean2D[global_id].y, dL_dmean2D_acc.y);
@@ -781,6 +818,9 @@ renderCUDA(
 				atomicAdd(&dL_dcolors[global_id * C + 1], dL_dcolors_acc.y);
 				atomicAdd(&dL_dcolors[global_id * C + 2], dL_dcolors_acc.z);
 				atomicAdd(&dL_ddepths[global_id], dL_ddepths_acc);
+				for (int ch = 0; ch < L; ++ch) {
+					atomicAdd(&dL_dsemantics[global_id * L + ch], dL_dsemantics_acc[ch][0]);
+				}
 			}
 		}
 	}
@@ -877,7 +917,11 @@ void BACKWARD::render(
 	float4* dL_dconic2D,
 	float* dL_dopacity,
 	float* dL_dcolors,
-	float* dL_ddepths)
+	float* dL_ddepths,
+	// semantic
+	const float* semantics,
+	const float* dL_dpixels_sems,
+	float* dL_dsemantics)
 {
 	renderCUDA<NUM_CHANNELS> << <grid, block >> >(
 		ranges,
@@ -896,6 +940,10 @@ void BACKWARD::render(
 		dL_dconic2D,
 		dL_dopacity,
 		dL_dcolors,
-		dL_ddepths
+		dL_ddepths,
+		// semantic
+		semantics,
+		dL_dpixels_sems,
+		dL_dsemantics
 	);
 }
