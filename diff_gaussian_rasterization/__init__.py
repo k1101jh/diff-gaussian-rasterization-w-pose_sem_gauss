@@ -12,7 +12,24 @@
 from typing import NamedTuple
 import torch.nn as nn
 import torch
-from . import _C
+from torch.utils.cpp_extension import load
+import os
+
+# JIT Compilation
+_C = load(
+    name="diff_gaussian_rasterization_w_pose_sem_gauss",
+    sources=[
+        os.path.join(os.path.dirname(__file__), "../cuda_rasterizer/rasterizer_impl.cu"),
+        os.path.join(os.path.dirname(__file__), "../cuda_rasterizer/forward.cu"),
+        os.path.join(os.path.dirname(__file__), "../cuda_rasterizer/backward.cu"),
+        os.path.join(os.path.dirname(__file__), "../rasterize_points.cu"),
+        os.path.join(os.path.dirname(__file__), "../ext.cpp"),
+    ],
+    extra_include_paths=[
+        os.path.join(os.path.dirname(__file__), "../third_party/glm/"),
+    ],
+    verbose=True,
+)
 
 
 def cpu_deep_copy_tuple(input_tuple):
@@ -194,6 +211,7 @@ class _RasterizeGaussians(torch.autograd.Function):
             raster_settings.tanfovy,
             grad_out_color,
             grad_out_depth,
+            grad_out_opacity,  # Add this
             sh,
             raster_settings.sh_degree,
             raster_settings.campos,
@@ -220,8 +238,8 @@ class _RasterizeGaussians(torch.autograd.Function):
                     grad_sh,
                     grad_scales,
                     grad_rotations,
-                    grad_semantics,
                     grad_tau,
+                    grad_semantics,
                 ) = _C.rasterize_gaussians_backward(*args)
             except Exception as ex:
                 torch.save(cpu_args, "snapshot_bw.dump")
@@ -238,8 +256,6 @@ class _RasterizeGaussians(torch.autograd.Function):
                 grad_scales,
                 grad_rotations,
                 grad_tau,
-                None,
-                # semantic
                 grad_semantics,
             ) = _C.rasterize_gaussians_backward(*args)
 
@@ -259,6 +275,7 @@ class _RasterizeGaussians(torch.autograd.Function):
             grad_theta,
             grad_rho,
             None,
+            grad_semantics,
         )
 
         return grads
@@ -354,5 +371,5 @@ class GaussianRasterizer(nn.Module):
             rho,
             raster_settings,
             # semantic
-            sh_sems
+            sh_sems,
         )

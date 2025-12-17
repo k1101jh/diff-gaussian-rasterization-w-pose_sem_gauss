@@ -373,7 +373,14 @@ renderCUDA(
 			for (int ch = 0; ch < SEMANTICS; ch++){
 				L[ch] += sem_features[collected_id[j] * SEMANTICS + ch] * alpha * T;}
 
-			D += collected_depth[j] * alpha * T;
+			// Mean depth:
+            // D += collected_depth[j] * alpha * T;
+			
+			// Median depth:
+            if (T > 0.5f && test_T < 0.5f)
+			{
+				D = collected_depth[j];
+			}
 			// Keep track of how many pixels touched this Gaussian.
 			if (test_T > 0.5f) {
 				atomicAdd(&(n_touched[collected_id[j]]), 1);
@@ -440,8 +447,8 @@ void FORWARD::render(
 		out_opacity,
 		// semantic
 		semantics,
-		out_semantics
-		n_touched,
+		out_semantics,
+		n_touched
 	);
 }
 

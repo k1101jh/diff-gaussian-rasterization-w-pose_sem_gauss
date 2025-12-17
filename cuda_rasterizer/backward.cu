@@ -468,7 +468,7 @@ __global__ void preprocessCUDA(
 
 	float a = proj_raw[0];
 	float b = proj_raw[5];
-	float c = proj_raw[10];
+	// float c = proj_raw[10];
 	float d = proj_raw[14];
 	float e = proj_raw[11];
 
@@ -560,7 +560,7 @@ __device__ void render_cuda_reduce_sum(group_t g, Lists... lists) {
 
 
 // Backward version of the rendering procedure.
-template <uint32_t C>
+template <uint32_t C, uint32_t L>
 __global__ void __launch_bounds__(BLOCK_X * BLOCK_Y)
 renderCUDA(
 	const uint2* __restrict__ ranges,
@@ -575,6 +575,7 @@ renderCUDA(
 	const uint32_t* __restrict__ n_contrib,
 	const float* __restrict__ dL_dpixels,
 	const float* __restrict__ dL_dpixels_depth,
+	const float* __restrict__ dL_dpixels_opacity,
 	float3* __restrict__ dL_dmean2D,
 	float4* __restrict__ dL_dconic2D,
 	float* __restrict__ dL_dopacity,
@@ -634,6 +635,7 @@ renderCUDA(
 	float dL_dpixel[C] = { 0 };
 	float accum_rec_depth = 0;
 	float dL_dpixel_depth = 0;
+	float dL_dpixel_opacity = 0;
 	// semantic
 	float accum_rec_sem[L] = { 0 };
 	float dL_dpixel_sem[L];
@@ -643,6 +645,7 @@ renderCUDA(
 			dL_dpixel[i] = dL_dpixels[i * H * W + pix_id];
 		}
 		dL_dpixel_depth = dL_dpixels_depth[pix_id];
+		dL_dpixel_opacity = dL_dpixels_opacity[pix_id];
 		// semantic
 		for (int i = 0; i < L; i++)
 			dL_dpixel_sem[i] = dL_dpixels_sems[i * H * W + pix_id];
@@ -771,7 +774,7 @@ renderCUDA(
 			for (int i = 0; i < C; i++) {
 				bg_dot_dpixel +=  bg_color[i] * dL_dpixel[i];
 			}
-			dL_dalpha += (-T_final / (1.f - alpha)) * bg_dot_dpixel;
+			dL_dalpha += (-T_final / (1.f - alpha)) * (bg_dot_dpixel - dL_dpixel_opacity);
 
 			// Helpful reusable temporary variables
 			const float dL_dG = con_o.w * dL_dalpha;
@@ -792,7 +795,7 @@ renderCUDA(
 				dL_dconic2D_shared,
 				dL_dopacity_shared,
 				dL_dcolors_shared, 
-				dL_ddepths_shared,
+				dL_ddepths_shared
 			);
 			for (int ch = 0; ch < L; ++ch) {
 				render_cuda_reduce_sum(block,
@@ -806,7 +809,7 @@ renderCUDA(
 				float dL_dopacity_acc = dL_dopacity_shared[0];
 				float3 dL_dcolors_acc = dL_dcolors_shared[0];
 				float dL_ddepths_acc = dL_ddepths_shared[0];
-				float dL_dsemantics_acc = dL_dsemantics_shared[0];
+				// float dL_dsemantics_acc = dL_dsemantics_shared[0];
 
 				atomicAdd(&dL_dmean2D[global_id].x, dL_dmean2D_acc.x);
 				atomicAdd(&dL_dmean2D[global_id].y, dL_dmean2D_acc.y);
@@ -819,7 +822,7 @@ renderCUDA(
 				atomicAdd(&dL_dcolors[global_id * C + 2], dL_dcolors_acc.z);
 				atomicAdd(&dL_ddepths[global_id], dL_ddepths_acc);
 				for (int ch = 0; ch < L; ++ch) {
-					atomicAdd(&dL_dsemantics[global_id * L + ch], dL_dsemantics_acc[ch][0]);
+					atomicAdd(&dL_dsemantics[global_id * L + ch], dL_dsemantics_shared[ch][0]);
 				}
 			}
 		}
@@ -913,6 +916,7 @@ void BACKWARD::render(
 	const uint32_t* n_contrib,
 	const float* dL_dpixels,
 	const float* dL_dpixels_depth,
+	const float* dL_dpixels_opacity,
 	float3* dL_dmean2D,
 	float4* dL_dconic2D,
 	float* dL_dopacity,
@@ -923,7 +927,7 @@ void BACKWARD::render(
 	const float* dL_dpixels_sems,
 	float* dL_dsemantics)
 {
-	renderCUDA<NUM_CHANNELS> << <grid, block >> >(
+	renderCUDA<NUM_CHANNELS, NUM_LABELS> << <grid, block >> >(
 		ranges,
 		point_list,
 		W, H,
@@ -936,6 +940,7 @@ void BACKWARD::render(
 		n_contrib,
 		dL_dpixels,
 		dL_dpixels_depth,
+		dL_dpixels_opacity,
 		dL_dmean2D,
 		dL_dconic2D,
 		dL_dopacity,

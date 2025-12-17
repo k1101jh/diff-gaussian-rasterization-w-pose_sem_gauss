@@ -373,6 +373,7 @@ void CudaRasterizer::Rasterizer::backward(
 	char* img_buffer,
 	const float* dL_dpix,
 	const float* dL_dpix_depth,
+	const float* dL_dpix_opacity,
 	float* dL_dmean2D,
 	float* dL_dconic,
 	float* dL_dopacity,
@@ -428,6 +429,7 @@ void CudaRasterizer::Rasterizer::backward(
 		imgState.n_contrib,
 		dL_dpix,
 		dL_dpix_depth,
+		dL_dpix_opacity,
 		(float3*)dL_dmean2D,
 		(float4*)dL_dconic,
 		dL_dopacity,
@@ -436,7 +438,7 @@ void CudaRasterizer::Rasterizer::backward(
 		// semantic
 		sem_ptr,
 		dL_dpix_sem,
-		dL_dsemantics,
+		dL_dsemantics
     ), debug)
 
 	// Take care of the rest of preprocessing. Was the precomputed covariance
