@@ -480,8 +480,11 @@ __global__ void preprocessCUDA(
 	mat33 dp_C_d_rho = mat33::identity();
 	mat33 dp_C_d_theta = -mat33::skew_symmetric(p_C);
 
-	float3 d_proj_dp_C1 = make_float3(alpha * a, 0.f, beta * e);
-	float3 d_proj_dp_C2 = make_float3(0.f, alpha * b, gamma * e);
+	////// 수정사항!!
+	// 화면 중심이 중앙이 아닐 수 있음.
+	// 이를 해결하기 위해 세 번째 인자에 alpha * ~ 를 더함
+	float3 d_proj_dp_C1 = make_float3(alpha * a, 0.f, beta * e + alpha * proj_raw[8]);
+	float3 d_proj_dp_C2 = make_float3(0.f, alpha * b, gamma * e + alpha * proj_raw[9]);
 
 	float3 d_proj_dp_C1_d_rho = dp_C_d_rho.transpose() * d_proj_dp_C1; // x.T A = A.T x
 	float3 d_proj_dp_C2_d_rho = dp_C_d_rho.transpose() * d_proj_dp_C2;

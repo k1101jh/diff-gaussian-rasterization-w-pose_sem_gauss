@@ -17,7 +17,7 @@ import os
 
 # JIT Compilation
 _C = load(
-    name="diff_gaussian_rasterization_w_pose_sem_gauss",
+    name="diff_gaussian_rasterization_sem_gauss",
     sources=[
         os.path.join(os.path.dirname(__file__), "../cuda_rasterizer/rasterizer_impl.cu"),
         os.path.join(os.path.dirname(__file__), "../cuda_rasterizer/forward.cu"),
@@ -48,9 +48,8 @@ def rasterize_gaussians(
     cov3Ds_precomp,
     theta,
     rho,
-    raster_settings,
-    # semantic
     sh_sems,
+    raster_settings,
 ):
     return _RasterizeGaussians.apply(
         means3D,
@@ -63,9 +62,8 @@ def rasterize_gaussians(
         cov3Ds_precomp,
         theta,
         rho,
-        raster_settings,
-        # semantic
         sh_sems,
+        raster_settings,
     )
 
 
@@ -83,11 +81,9 @@ class _RasterizeGaussians(torch.autograd.Function):
         cov3Ds_precomp,
         theta,
         rho,
-        raster_settings,
-        # semantic
         sh_sems,
+        raster_settings,
     ):
-
         # Restructure arguments the way that the C++ lib expects them
         args = (
             raster_settings.bg,
@@ -98,9 +94,9 @@ class _RasterizeGaussians(torch.autograd.Function):
             rotations,
             raster_settings.scale_modifier,
             cov3Ds_precomp,
-            raster_settings.viewmatrix,
+            raster_settings.viewmatrix, # Updated viewmatrix
             raster_settings.projmatrix,
-            raster_settings.projmatrix_raw,
+            raster_settings.projmatrix_raw, # projmatrix_raw
             raster_settings.tanfovx,
             raster_settings.tanfovy,
             raster_settings.image_height,
@@ -109,44 +105,26 @@ class _RasterizeGaussians(torch.autograd.Function):
             raster_settings.sh_degree,
             raster_settings.campos,
             raster_settings.prefiltered,
-            # semantic
             sh_sems,
             raster_settings.debug,
         )
-
         # Invoke C++/CUDA rasterizer
         if raster_settings.debug:
             cpu_args = cpu_deep_copy_tuple(args)  # Copy them before they can be corrupted
             try:
-                (
-                    num_rendered,
-                    color,
-                    radii,
-                    geomBuffer,
-                    binningBuffer,
-                    imgBuffer,
-                    depth,
-                    opacity,
-                    semantics,
-                    n_touched,
-                ) = _C.rasterize_gaussians(*args)
+                num_rendered, color, radii, geomBuffer, binningBuffer, imgBuffer, depth, opacity, semantics, n_touched = _C.rasterize_gaussians(
+                    *args
+                )
             except Exception as ex:
                 torch.save(cpu_args, "snapshot_fw.dump")
-                print("\nAn error occured in forward. Please forward snapshot_fw.dump for debugging.")
+                print(
+                    "\nAn error occurred in forward. A snapshot_fw.dump file has been created for debugging."
+                )
                 raise ex
         else:
-            (
-                num_rendered,
-                color,
-                radii,
-                geomBuffer,
-                binningBuffer,
-                imgBuffer,
-                depth,
-                opacity,
-                semantics,
-                n_touched,
-            ) = _C.rasterize_gaussians(*args)
+            num_rendered, color, radii, geomBuffer, binningBuffer, imgBuffer, depth, opacity, semantics, n_touched = _C.rasterize_gaussians(
+                *args
+            )
 
         # Keep relevant tensors for backward
         ctx.raster_settings = raster_settings
@@ -157,12 +135,16 @@ class _RasterizeGaussians(torch.autograd.Function):
             scales,
             rotations,
             cov3Ds_precomp,
-            radii,
             sh,
             geomBuffer,
             binningBuffer,
             imgBuffer,
+            opacity,
+            radii,
             sh_sems,
+            # save theta/rho if needed? But C++ doesn't use them. 
+            # If d_viewmatrix is computed, it's implicit? Use explicit save just in case logic later needs it?
+            # For now keep strictly to what works for C++.
         )
         return color, radii, depth, opacity, semantics, n_touched
 
@@ -186,15 +168,31 @@ class _RasterizeGaussians(torch.autograd.Function):
             scales,
             rotations,
             cov3Ds_precomp,
-            radii,
             sh,
             geomBuffer,
             binningBuffer,
             imgBuffer,
+            alpha,
+            radii,
             sh_sems,
         ) = ctx.saved_tensors
 
         # Restructure args as C++ method expects them
+        if grad_out_color is None:
+            grad_out_color = torch.zeros((3, raster_settings.image_height, raster_settings.image_width), device="cuda", dtype=torch.float32)
+        if grad_out_depth is None:
+            grad_out_depth = torch.zeros((1, raster_settings.image_height, raster_settings.image_width), device="cuda", dtype=torch.float32)
+        if grad_out_opacity is None:
+            grad_out_opacity = torch.zeros((1, raster_settings.image_height, raster_settings.image_width), device="cuda", dtype=torch.float32)
+        if grad_out_semantics is None:
+            # Infer number of classes from sh_sems? sh_sems is (N, C).
+            num_classes = sh_sems.shape[1] if sh_sems is not None else 0
+            if num_classes > 0:
+                grad_out_semantics = torch.zeros((num_classes, raster_settings.image_height, raster_settings.image_width), device="cuda", dtype=torch.float32)
+            else:
+                 # Should not happen if sh_sems is passed
+                 grad_out_semantics = torch.Tensor([]).cuda()
+
         args = (
             raster_settings.bg,
             means3D,
@@ -274,8 +272,8 @@ class _RasterizeGaussians(torch.autograd.Function):
             grad_cov3Ds_precomp,
             grad_theta,
             grad_rho,
-            None,
             grad_semantics,
+            None,
         )
 
         return grads
@@ -369,7 +367,6 @@ class GaussianRasterizer(nn.Module):
             cov3D_precomp,
             theta,
             rho,
-            raster_settings,
-            # semantic
             sh_sems,
+            raster_settings,
         )

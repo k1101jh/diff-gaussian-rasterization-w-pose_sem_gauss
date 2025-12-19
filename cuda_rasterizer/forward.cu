@@ -365,22 +365,25 @@ renderCUDA(
 				done = true;
 				continue;
 			}
+			
 			// Eq. (3) from 3D Gaussian splatting paper.
 			for (int ch = 0; ch < CHANNELS; ch++) {
 				C[ch] += features[collected_id[j] * CHANNELS + ch] * alpha * T;
 			}
+
+			// Mean depth:
+            D += collected_depth[j] * alpha * T;
+			
+			// Median depth:
+//             if (T > 0.5f && test_T < 0.5f)
+// 			{
+// 				D = collected_depth[j];
+// 			}
+
 			// semantic
 			for (int ch = 0; ch < SEMANTICS; ch++){
 				L[ch] += sem_features[collected_id[j] * SEMANTICS + ch] * alpha * T;}
 
-			// Mean depth:
-            // D += collected_depth[j] * alpha * T;
-			
-			// Median depth:
-            if (T > 0.5f && test_T < 0.5f)
-			{
-				D = collected_depth[j];
-			}
 			// Keep track of how many pixels touched this Gaussian.
 			if (test_T > 0.5f) {
 				atomicAdd(&(n_touched[collected_id[j]]), 1);
