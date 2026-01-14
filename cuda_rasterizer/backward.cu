@@ -469,7 +469,7 @@ __global__ void preprocessCUDA(
 	float a = proj_raw[0];
 	float b = proj_raw[5];
 	// float c = proj_raw[10];
-	float d = proj_raw[14];
+	// float d = proj_raw[14];
 	float e = proj_raw[11];
 
 	SE3 T_CW(viewmatrix);
@@ -731,7 +731,7 @@ renderCUDA(
 			float dL_dalpha = 0.0f;
 			const int global_id = collected_id[j];
 			float local_dL_dcolors[3];
-			float local_dL_dsemantics[L];
+			// float local_dL_dsemantics[L];
 			#pragma unroll
 			for (int ch = 0; ch < C; ch++)
 			{
